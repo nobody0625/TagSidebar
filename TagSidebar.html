@@ -6,21 +6,110 @@
     <title>我的侧边栏</title>
     <style>
       body {
-        width: 300px;
-        height: 100%;
-        margin: 0;
+        min-width: 200px;
         padding: 10px;
+        box-sizing: border-box;
         font-family: Arial, sans-serif;
+        color: #1f1f1f;
       }
       h1 {
         font-size: 16px;
         color: #333;
+        margin-bottom: 12px;
+      }
+      #toggle-fullscreen-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        margin-bottom: 12px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        background-color: #f6f8fa;
+        color: #24292f;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      #toggle-fullscreen-btn:hover {
+        background-color: #eef1f4;
+      }
+      #tabs-container {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .tab-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
+        border-radius: 6px;
+        transition: background-color 0.2s ease;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .tab-item:hover {
+        background-color: #f1f5ff;
+      }
+      .tab-item--active {
+        background-color: #e7efff;
+      }
+      .tab-icon {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        background-color: #edf2f7;
+        color: #3b3f45;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .tab-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .tab-title {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-grow: 1;
+        margin-right: 6px;
+      }
+      .tab-title--muted {
+        color: #6b7280;
+      }
+      .close-tab-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        padding: 2px 4px;
+        color: #6b7280;
+        border-radius: 4px;
+      }
+      .close-tab-btn:hover {
+        background-color: rgba(239, 68, 68, 0.08);
+        color: #ef4444;
+      }
+      .empty-state {
+        font-size: 13px;
+        color: #6b7280;
+        text-align: center;
+        padding: 12px 0;
       }
     </style>
   </head>
   <body>
     <h1>我的侧边栏</h1>
-    <div id="content"></div>
+    <button id="toggle-fullscreen-btn">切换全屏</button>
+    <div id="tabs-container"></div>
     <script src="TagSidebar.js"></script>
   </body>
 </html>

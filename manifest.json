@@ -6,7 +6,7 @@
   "icons": {
     "48": "icon.png"
   },
-  "permissions": ["sidePanel"],
+  "permissions": ["sidePanel", "tabs"],
   "action": {
     "default_title": "打开侧边栏"
   },
