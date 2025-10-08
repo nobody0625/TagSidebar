@@ -1,5 +1,15 @@
 {
+  "manifest_version": 3,
   "name": "标签侧边栏",
   "version": "1.0",
-  "description": "一个将标签页显示在侧边栏的浏览器扩展"
+  "description": "一个将标签页显示在侧边栏的浏览器扩展",
+  "icons": {
+    "48": "icon.png"
+  },
+  "sidebar_action": {
+    "default_page": "sidebar.html",
+    "default_icon": "icon.png",
+    "default_title": "我的侧边栏"
+  },
+  "permissions": ["storage"]
 }
