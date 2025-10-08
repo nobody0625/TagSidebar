@@ -243,12 +243,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         closableOthers.length === 0
       ),
       actionItem(
-        "关闭右侧标签页",
+        "关闭下方全部标签页",
         () => closeTabs(tabsToRight),
         tabsToRight.length === 0
       ),
       actionItem(
-        "关闭左侧标签页",
+        "关闭上方全部标签页",
         () => closeTabs(tabsToLeft),
         tabsToLeft.length === 0
       ),
