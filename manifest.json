@@ -6,10 +6,14 @@
   "icons": {
     "48": "icon.png"
   },
-  "sidebar_action": {
-    "default_page": "sidebar.html",
-    "default_icon": "icon.png",
-    "default_title": "我的侧边栏"
+  "permissions": ["sidePanel"],
+  "action": {
+    "default_title": "打开侧边栏"
   },
-  "permissions": ["storage"]
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "TagSidebar.html"
+  }
 }
