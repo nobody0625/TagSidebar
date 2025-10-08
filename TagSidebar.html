@@ -104,11 +104,58 @@
         text-align: center;
         padding: 12px 0;
       }
+      .context-menu {
+        position: fixed;
+        z-index: 2000;
+        min-width: 200px;
+        background-color: #ffffff;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+        padding: 4px 0;
+        display: none;
+        color: #111827;
+      }
+      .context-menu__item {
+        width: 100%;
+        border: none;
+        background: transparent;
+        padding: 6px 16px;
+        text-align: left;
+        font-size: 13px;
+        color: inherit;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+        outline: none;
+      }
+      .context-menu__item:hover {
+        background-color: #edf2ff;
+      }
+      .context-menu__item--disabled,
+      .context-menu__item[disabled] {
+        color: #c0c6d1;
+        cursor: not-allowed;
+      }
+      .context-menu__item--disabled:hover,
+      .context-menu__item[disabled]:hover {
+        background-color: transparent;
+      }
+      .context-menu__separator {
+        height: 1px;
+        background-color: #e5e7eb;
+        margin: 4px 0;
+      }
     </style>
   </head>
   <body>
     <button id="toggle-fullscreen-btn">切换全屏</button>
     <div id="tabs-container"></div>
+    <div
+      id="custom-context-menu"
+      class="context-menu"
+      role="menu"
+      aria-hidden="true"
+    ></div>
     <script src="TagSidebar.js"></script>
   </body>
 </html>
