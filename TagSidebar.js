@@ -402,7 +402,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       actionItem("新建标签页", () =>
         chrome.tabs.create({ windowId: tab.windowId })
       ),
-      actionItem("在右侧新建标签页", () =>
+      actionItem("在下侧新建标签页", () =>
         chrome.tabs.create({ windowId: tab.windowId, index: tab.index + 1 })
       ),
       separator(),
