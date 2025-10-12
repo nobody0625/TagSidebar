@@ -45,6 +45,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   let contextMenuAnchor = null;
   let targetZoomPercent = null;
   const reloadingTabIds = new Set();
+  let currentActiveTabId = null;
+  let lastActiveTabIdBeforeClick = null;
 
   addListener(window, "unload", dispose);
 
@@ -117,9 +119,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   addChromeListener(chrome.tabs.onUpdated, handleTabStatusChange);
   addChromeListener(chrome.tabs.onRemoved, handleTabRemoved);
   addChromeListener(chrome.windows.onCreated, handleWindowCreated);
+  addChromeListener(chrome.tabs.onActivated, handleTabActivated);
 
   addListener(tabsContainer, "contextmenu", handleTabContextMenu);
   addListener(tabsContainer, "click", handleTabClick);
+  addListener(tabsContainer, "dblclick", handleTabDoubleClick);
 
   const passive = { passive: true };
   const scrollTargets = [
@@ -162,6 +166,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     if (isContextMenuVisible) hideContextMenu(true);
+
+    if (currentActiveTabId === null) {
+      const activeTab = cachedTabs.find((tab) => tab.active);
+      if (activeTab) currentActiveTabId = activeTab.id;
+    }
 
     let markup = "";
 
@@ -267,6 +276,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   function handleTabRemoved(tabId) {
     reloadingTabIds.delete(tabId);
+    if (currentActiveTabId === tabId) currentActiveTabId = null;
+    if (lastActiveTabIdBeforeClick === tabId) lastActiveTabIdBeforeClick = null;
   }
 
   async function handleTabClick(event) {
@@ -284,6 +295,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const actionButton = event.target.closest(
       ".reload-tab-btn, .close-tab-btn"
     );
+
+    if (event.detail === 1) {
+      lastActiveTabIdBeforeClick = null;
+    }
+
     if (actionButton?.classList.contains("reload-tab-btn")) {
       setTabLoadingState(context.id, true);
       try {
@@ -300,9 +316,59 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
+    const fallbackActiveTabId =
+      currentActiveTabId ?? cachedTabs.find((tab) => tab.active)?.id ?? null;
+    if (fallbackActiveTabId !== null && fallbackActiveTabId !== context.id) {
+      lastActiveTabIdBeforeClick = fallbackActiveTabId;
+    }
+
     await chrome.tabs.update(context.id, { active: true });
     const tab = await chrome.tabs.get(context.id);
     await chrome.windows.update(tab.windowId, { focused: true });
+  }
+
+  async function handleTabDoubleClick(event) {
+    const context = getTabContext(event);
+    if (!context) return;
+
+    const actionButton = event.target.closest(
+      ".reload-tab-btn, .close-tab-btn"
+    );
+    if (actionButton) return;
+
+    event.preventDefault();
+    hideContextMenu();
+
+    try {
+      await chrome.tabs.remove(context.id);
+
+      const restoreTabId =
+        lastActiveTabIdBeforeClick && lastActiveTabIdBeforeClick !== context.id
+          ? lastActiveTabIdBeforeClick
+          : null;
+      lastActiveTabIdBeforeClick = null;
+
+      if (restoreTabId) {
+        const tabToRestore = await chrome.tabs
+          .get(restoreTabId)
+          .catch(() => null);
+        if (tabToRestore) {
+          await chrome.tabs.update(restoreTabId, { active: true });
+          await chrome.windows.update(tabToRestore.windowId, {
+            focused: true,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("双击关闭标签页失败", error);
+      lastActiveTabIdBeforeClick = null;
+    }
+  }
+
+  function handleTabActivated(activeInfo) {
+    if (currentActiveTabId !== activeInfo.tabId) {
+      currentActiveTabId = activeInfo.tabId;
+    }
   }
 
   async function createTabInCurrentWindow() {
