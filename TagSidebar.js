@@ -177,6 +177,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="tab-item${activeClass}" data-tab-id="${tab.id}">
         <div class="tab-icon">${icon}</div>
         <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
+        <button class="reload-tab-btn" type="button" aria-label="刷新标签页 ${escapedTitle}" title="刷新">↻</button>
         <button class="close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}">&times;</button>
       </div>
     `;
@@ -231,7 +232,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     hideContextMenu();
 
-    if (event.target.classList.contains("close-tab-btn")) {
+    const actionButton = event.target.closest(
+      ".reload-tab-btn, .close-tab-btn"
+    );
+    if (actionButton?.classList.contains("reload-tab-btn")) {
+      await chrome.tabs.reload(context.id);
+      return;
+    }
+
+    if (actionButton?.classList.contains("close-tab-btn")) {
       await chrome.tabs.remove(context.id);
       return;
     }
