@@ -50,6 +50,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const reloadingTabIds = new Set();
   let currentActiveTabId = null;
   let lastActiveTabIdBeforeClick = null;
+  let draggedTabId = null;
+  let dragOverElement = null;
 
   addListener(window, "unload", dispose);
 
@@ -136,6 +138,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   addListener(tabsContainer, "contextmenu", handleTabContextMenu);
   addListener(tabsContainer, "click", handleTabClick);
   addListener(tabsContainer, "dblclick", handleTabDoubleClick);
+  addListener(tabsContainer, "dragstart", handleTabDragStart);
+  addListener(tabsContainer, "dragover", handleTabDragOver);
+  addListener(tabsContainer, "dragleave", handleTabDragLeave);
+  addListener(tabsContainer, "drop", handleTabDrop);
+  addListener(tabsContainer, "dragend", handleTabDragEnd);
 
   const passive = { passive: true };
   const scrollTargets = [
@@ -204,7 +211,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const reloadAttrs = isReloading ? ' disabled aria-busy="true"' : "";
 
     return `
-      <div class="tab-item${activeClass}" data-tab-id="${tab.id}">
+  <div class="tab-item${activeClass}" data-tab-id="${tab.id}" draggable="true">
         <div class="${iconClass}">${icon}</div>
         <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
         <button class="reload-tab-btn"${reloadAttrs} type="button" aria-label="刷新标签页 ${escapedTitle}" title="刷新">↻</button>
@@ -368,6 +375,119 @@ document.addEventListener("DOMContentLoaded", async () => {
       console.error("双击关闭标签页失败", error);
       lastActiveTabIdBeforeClick = null;
     }
+  }
+
+  function handleTabDragStart(event) {
+    const tabElement = event.target.closest(".tab-item");
+    if (!tabElement) return;
+
+    const tabId = Number(tabElement.dataset.tabId);
+    if (!Number.isFinite(tabId)) return;
+
+    draggedTabId = tabId;
+    event.dataTransfer?.setData("text/plain", String(tabId));
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+    }
+    tabElement.classList.add("tab-item--dragging");
+  }
+
+  function handleTabDragOver(event) {
+    if (!Number.isFinite(draggedTabId)) return;
+
+    const tabElement = event.target.closest(".tab-item");
+    if (!tabElement || Number(tabElement.dataset.tabId) === draggedTabId) {
+      if (!tabElement) {
+        dragOverElement?.classList.remove("tab-item--drag-over");
+        dragOverElement = null;
+        event.preventDefault();
+      }
+      return;
+    }
+
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+
+    if (dragOverElement && dragOverElement !== tabElement) {
+      dragOverElement.classList.remove("tab-item--drag-over");
+    }
+
+    dragOverElement = tabElement;
+    dragOverElement.classList.add("tab-item--drag-over");
+  }
+
+  function handleTabDragLeave(event) {
+    const related = event.relatedTarget;
+    if (!related || !tabsContainer.contains(related)) {
+      dragOverElement?.classList.remove("tab-item--drag-over");
+      dragOverElement = null;
+    }
+  }
+
+  async function handleTabDrop(event) {
+    if (!Number.isFinite(draggedTabId)) return;
+    event.preventDefault();
+
+    const sourceTab = cachedTabs.find((tab) => tab.id === draggedTabId);
+    if (!sourceTab) {
+      resetDragState();
+      return;
+    }
+
+    const targetElement = event.target.closest(".tab-item");
+    let targetIndex = cachedTabs.length;
+
+    if (targetElement) {
+      const targetId = Number(targetElement.dataset.tabId);
+      if (targetId === draggedTabId) {
+        resetDragState();
+        return;
+      }
+
+      if (Number.isFinite(targetId)) {
+        const targetTab = cachedTabs.find((tab) => tab.id === targetId);
+        if (targetTab) {
+          const rect = targetElement.getBoundingClientRect();
+          const insertBefore = event.clientY < rect.top + rect.height / 2;
+          targetIndex = insertBefore ? targetTab.index : targetTab.index + 1;
+        }
+      }
+    }
+
+    if (!Number.isFinite(targetIndex)) {
+      resetDragState();
+      return;
+    }
+
+    if (targetIndex > sourceTab.index) {
+      targetIndex -= 1;
+    }
+
+    if (targetIndex !== sourceTab.index) {
+      try {
+        await chrome.tabs.move(draggedTabId, { index: targetIndex });
+        await loadTabs();
+      } catch (error) {
+        console.error("拖拽排序失败", error);
+      }
+    }
+
+    resetDragState();
+  }
+
+  function handleTabDragEnd() {
+    resetDragState();
+  }
+
+  function resetDragState() {
+    tabsContainer
+      .querySelectorAll(".tab-item--dragging")
+      .forEach((element) => element.classList.remove("tab-item--dragging"));
+    dragOverElement?.classList.remove("tab-item--drag-over");
+    dragOverElement = null;
+    draggedTabId = null;
   }
 
   function handleTabActivated(activeInfo) {
