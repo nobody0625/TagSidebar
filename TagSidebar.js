@@ -153,15 +153,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (isContextMenuVisible) hideContextMenu(true);
 
+    let markup = "";
+
     if (!cachedTabs.length) {
-      tabsContainer.innerHTML =
-        '<p class="empty-state">当前没有打开的标签页</p>';
-      return;
+      markup = '<p class="empty-state">当前没有打开的标签页</p>';
+    } else {
+      markup = cachedTabs.map(renderTab).join("");
     }
 
-    const markup = cachedTabs.map(renderTab).join("");
-
-    tabsContainer.innerHTML = markup;
+    tabsContainer.innerHTML = `${markup}${renderNewTabRow()}`;
   }
 
   function renderTab(tab) {
@@ -179,6 +179,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
         <button class="close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}">&times;</button>
       </div>
+    `;
+  }
+
+  function renderNewTabRow() {
+    return `
+      <button class="new-tab-btn" type="button">
+        <span class="new-tab-btn__icon">＋</span>
+        <span>新建标签页</span>
+      </button>
     `;
   }
 
@@ -211,6 +220,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function handleTabClick(event) {
+    if (event.target.closest(".new-tab-btn")) {
+      hideContextMenu();
+      await createTabInCurrentWindow();
+      return;
+    }
+
     const context = getTabContext(event);
     if (!context) return;
 
@@ -224,6 +239,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     await chrome.tabs.update(context.id, { active: true });
     const tab = await chrome.tabs.get(context.id);
     await chrome.windows.update(tab.windowId, { focused: true });
+  }
+
+  async function createTabInCurrentWindow() {
+    const { id: windowId } = await chrome.windows.getCurrent({
+      populate: false,
+    });
+    await chrome.tabs.create({ windowId });
   }
 
   const separator = () => ({ type: "separator" });
