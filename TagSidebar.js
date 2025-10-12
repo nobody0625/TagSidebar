@@ -1,33 +1,36 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  const toggleFullscreenBtn = document.getElementById("toggle-fullscreen-btn");
-  const setZoomBtn = document.getElementById("set-zoom-btn");
-  const tabsContainer = document.getElementById("tabs-container");
-  const contextMenu = document.getElementById("custom-context-menu");
+  const [toggleFullscreenBtn, setZoomBtn, tabsContainer, contextMenu] = [
+    document.getElementById("toggle-fullscreen-btn"),
+    document.getElementById("set-zoom-btn"),
+    document.getElementById("tabs-container"),
+    document.getElementById("custom-context-menu"),
+  ];
 
   if (!tabsContainer || !contextMenu) {
     console.warn("初始化侧边栏失败：缺少关键元素");
     return;
   }
 
-  const ESCAPE_LOOKUP = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  const escapeHtml = (value = "") =>
-    String(value).replace(/[&<>"']/g, (char) => ESCAPE_LOOKUP[char] ?? char);
+  const escapeHtml = (() => {
+    const LOOKUP = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return (value = "") =>
+      String(value).replace(/[&<>"']/g, (char) => LOOKUP[char] ?? char);
+  })();
 
   const cleanupTasks = [];
-  const addCleanup = (fn) => cleanupTasks.push(fn);
   const addListener = (target, type, handler, options) => {
     target.addEventListener(type, handler, options);
-    addCleanup(() => target.removeEventListener(type, handler, options));
+    cleanupTasks.push(() => target.removeEventListener(type, handler, options));
   };
   const addChromeListener = (eventTarget, handler) => {
     eventTarget.addListener(handler);
-    addCleanup(() => eventTarget.removeListener(handler));
+    cleanupTasks.push(() => eventTarget.removeListener(handler));
   };
   const dispose = () => {
     while (cleanupTasks.length) {
@@ -100,7 +103,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     addListener(setZoomBtn, "click", () => promptAndApplyZoom());
   }
 
-  const tabEvents = [
+  [
     chrome.tabs.onCreated,
     chrome.tabs.onRemoved,
     chrome.tabs.onUpdated,
@@ -109,16 +112,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.tabs.onDetached,
     chrome.tabs.onReplaced,
     chrome.tabs.onActivated,
-  ];
-  tabEvents.forEach((eventTarget) => {
-    addChromeListener(eventTarget, loadTabs);
-  });
+  ].forEach((eventTarget) => addChromeListener(eventTarget, loadTabs));
 
-  addChromeListener(chrome.tabs.onCreated, handleTabCreated);
-  addChromeListener(chrome.tabs.onUpdated, handleTabUpdated);
+  addChromeListener(chrome.tabs.onCreated, applyZoomToTab);
+  addChromeListener(chrome.tabs.onUpdated, async (tabId, changeInfo, tab) => {
+    if (
+      Number.isFinite(targetZoomPercent) &&
+      (changeInfo.status === "complete" || changeInfo.url)
+    ) {
+      const target = tab ?? (await chrome.tabs.get(tabId).catch(() => null));
+      await applyZoomToTab(target);
+    }
+  });
   addChromeListener(chrome.tabs.onUpdated, handleTabStatusChange);
   addChromeListener(chrome.tabs.onRemoved, handleTabRemoved);
-  addChromeListener(chrome.windows.onCreated, handleWindowCreated);
+  addChromeListener(chrome.windows.onCreated, async (window) => {
+    if (!Number.isFinite(targetZoomPercent)) return;
+    const tabs = await chrome.tabs.query({ windowId: window.id });
+    await Promise.all(tabs.map(applyZoomToTab));
+  });
   addChromeListener(chrome.tabs.onActivated, handleTabActivated);
 
   addListener(tabsContainer, "contextmenu", handleTabContextMenu);
@@ -172,13 +184,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (activeTab) currentActiveTabId = activeTab.id;
     }
 
-    let markup = "";
-
-    if (!cachedTabs.length) {
-      markup = '<p class="empty-state">当前没有打开的标签页</p>';
-    } else {
-      markup = cachedTabs.map(renderTab).join("");
-    }
+    const markup = cachedTabs.length
+      ? cachedTabs.map(renderTab).join("")
+      : '<p class="empty-state">当前没有打开的标签页</p>';
 
     tabsContainer.innerHTML = `${markup}${renderNewTabRow()}`;
   }
@@ -224,17 +232,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     const tabElement = tabsContainer.querySelector(`[data-tab-id="${tabId}"]`);
     if (!tabElement) return;
 
-    const iconElement = tabElement.querySelector(".tab-icon");
-    iconElement?.classList.toggle("tab-icon--loading", isLoading);
+    tabElement
+      .querySelector(".tab-icon")
+      ?.classList.toggle("tab-icon--loading", isLoading);
 
     const reloadButton = tabElement.querySelector(".reload-tab-btn");
-    if (!reloadButton) return;
-
-    reloadButton.disabled = isLoading;
-    if (isLoading) {
-      reloadButton.setAttribute("aria-busy", "true");
-    } else {
-      reloadButton.removeAttribute("aria-busy");
+    if (reloadButton) {
+      reloadButton.disabled = isLoading;
+      reloadButton.toggleAttribute("aria-busy", isLoading);
     }
   }
 
@@ -613,28 +618,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const zoomFactor = targetZoomPercent / 100;
     const tabs = await chrome.tabs.query({});
-
-    const success = [];
-    const failures = [];
-    const skipped = [];
+    const stats = { successCount: 0, failureDetails: [], skippedDetails: [] };
 
     await Promise.all(
       tabs.map(async (tab) => {
-        try {
-          const protocol = getUrlProtocol(tab.url);
-          if (!tab.url || restrictedProtocols.has(protocol)) {
-            skipped.push({
-              title: tab.title || tab.url || "未知页面",
-              reason: `不支持的协议：${protocol || "未知"}`,
-            });
-            return;
-          }
+        if (!tab?.url || restrictedProtocols.has(getUrlProtocol(tab.url))) {
+          stats.skippedDetails.push({
+            title: tab?.title || tab?.url || "未知页面",
+            reason: `不支持的协议：${getUrlProtocol(tab?.url) || "未知"}`,
+          });
+          return;
+        }
 
+        try {
           await chrome.tabs.setZoomSettings(tab.id, { scope: "per-tab" });
           await chrome.tabs.setZoom(tab.id, zoomFactor);
-          success.push(tab.id);
+          stats.successCount += 1;
         } catch (error) {
-          failures.push({
+          stats.failureDetails.push({
             title: tab.title || tab.url || "未知页面",
             reason: error?.message || "原因未知",
           });
@@ -642,51 +643,23 @@ document.addEventListener("DOMContentLoaded", async () => {
       })
     );
 
-    return {
-      successCount: success.length,
-      failureDetails: failures,
-      skippedDetails: skipped,
-    };
-  }
-
-  async function handleTabCreated(tab) {
-    await applyZoomToTab(tab);
-  }
-
-  async function handleTabUpdated(tabId, changeInfo, tab) {
-    if (!Number.isFinite(targetZoomPercent)) return;
-    if (changeInfo.status === "complete" || changeInfo.url) {
-      await applyZoomToTab(
-        tab ?? (await chrome.tabs.get(tabId).catch(() => null))
-      );
-    }
-  }
-
-  async function handleWindowCreated(window) {
-    if (!Number.isFinite(targetZoomPercent)) return;
-
-    const tabs = await chrome.tabs.query({ windowId: window.id });
-    await Promise.all(tabs.map((tab) => applyZoomToTab(tab)));
+    return stats;
   }
 
   async function applyZoomToTab(tab) {
-    if (!Number.isFinite(targetZoomPercent)) return;
-
-    let targetTab = tab;
-    if (!targetTab || typeof targetTab.id !== "number") {
+    if (
+      !Number.isFinite(targetZoomPercent) ||
+      !tab?.id ||
+      restrictedProtocols.has(getUrlProtocol(tab.url))
+    ) {
       return;
     }
 
     try {
-      const protocol = getUrlProtocol(targetTab.url);
-      if (!targetTab.url || restrictedProtocols.has(protocol)) {
-        return;
-      }
-
-      await chrome.tabs.setZoomSettings(targetTab.id, { scope: "per-tab" });
-      await chrome.tabs.setZoom(targetTab.id, targetZoomPercent / 100);
+      await chrome.tabs.setZoomSettings(tab.id, { scope: "per-tab" });
+      await chrome.tabs.setZoom(tab.id, targetZoomPercent / 100);
     } catch (error) {
-      console.warn("应用缩放失败", targetTab, error);
+      console.warn("应用缩放失败", tab, error);
     }
   }
 
