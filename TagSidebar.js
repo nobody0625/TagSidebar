@@ -1,5 +1,6 @@
 document.addEventListener("DOMContentLoaded", async () => {
   const toggleFullscreenBtn = document.getElementById("toggle-fullscreen-btn");
+  const setZoomBtn = document.getElementById("set-zoom-btn");
   const tabsContainer = document.getElementById("tabs-container");
   const contextMenu = document.getElementById("custom-context-menu");
 
@@ -24,6 +25,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     target.addEventListener(type, handler, options);
     addCleanup(() => target.removeEventListener(type, handler, options));
   };
+  const addChromeListener = (eventTarget, handler) => {
+    eventTarget.addListener(handler);
+    addCleanup(() => eventTarget.removeListener(handler));
+  };
   const dispose = () => {
     while (cleanupTasks.length) {
       try {
@@ -38,6 +43,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let cachedTabs = [];
   let isContextMenuVisible = false;
   let contextMenuAnchor = null;
+  let targetZoomPercent = null;
 
   addListener(window, "unload", dispose);
 
@@ -69,6 +75,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  const storageArea = chrome.storage?.sync ?? chrome.storage?.local;
+  const ZOOM_STORAGE_KEY = "globalZoomPercent";
+  const MIN_ZOOM_PERCENT = 10;
+  const MAX_ZOOM_PERCENT = 500;
+  const restrictedProtocols = new Set([
+    "about:",
+    "chrome:",
+    "chrome-extension:",
+    "edge:",
+    "devtools:",
+  ]);
+  const clampZoom = (value) =>
+    Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, value));
+  const describeTab = (tab) =>
+    tab?.title?.trim() || tab?.pendingUrl || tab?.url || "未命名标签页";
+  const isZoomableTab = (tab) =>
+    Boolean(tab?.url) && !restrictedProtocols.has(getUrlProtocol(tab.url));
+
+  if (setZoomBtn) {
+    addListener(setZoomBtn, "click", () => promptAndApplyZoom());
+  }
+
   const tabEvents = [
     chrome.tabs.onCreated,
     chrome.tabs.onRemoved,
@@ -80,9 +108,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.tabs.onActivated,
   ];
   tabEvents.forEach((eventTarget) => {
-    eventTarget.addListener(loadTabs);
-    addCleanup(() => eventTarget.removeListener(loadTabs));
+    addChromeListener(eventTarget, loadTabs);
   });
+
+  addChromeListener(chrome.tabs.onCreated, handleTabCreated);
+  addChromeListener(chrome.tabs.onUpdated, handleTabUpdated);
+  addChromeListener(chrome.windows.onCreated, handleWindowCreated);
 
   addListener(tabsContainer, "contextmenu", handleTabContextMenu);
   addListener(tabsContainer, "click", handleTabClick);
@@ -103,6 +134,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   addListener(window, "resize", repositionContextMenuToAnchor);
 
+  await loadTargetZoomFromStorage();
+  await applyZoomToAllTabs();
   await loadTabs();
 
   function getTabContext(event) {
@@ -126,28 +159,27 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    const markup = cachedTabs
-      .map((tab) => {
-        const rawTitle =
-          tab.title?.trim() || tab.pendingUrl || tab.url || "未命名标签页";
-        const escapedTitle = escapeHtml(rawTitle);
-        const iconContent = tab.favIconUrl
-          ? `<img src="${escapeHtml(tab.favIconUrl)}" alt="${escapedTitle}" />`
-          : escapeHtml((rawTitle[0] || "★").toUpperCase());
-        const activeClass = tab.active ? " tab-item--active" : "";
-        const mutedClass = tab.mutedInfo?.muted ? " tab-title--muted" : "";
-
-        return `
-          <div class="tab-item${activeClass}" data-tab-id="${tab.id}">
-            <div class="tab-icon">${iconContent}</div>
-            <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
-            <button class="close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}">&times;</button>
-          </div>
-        `;
-      })
-      .join("");
+    const markup = cachedTabs.map(renderTab).join("");
 
     tabsContainer.innerHTML = markup;
+  }
+
+  function renderTab(tab) {
+    const title = describeTab(tab);
+    const escapedTitle = escapeHtml(title);
+    const icon = tab.favIconUrl
+      ? `<img src="${escapeHtml(tab.favIconUrl)}" alt="${escapedTitle}" />`
+      : escapeHtml((title[0] || "★").toUpperCase());
+    const activeClass = tab.active ? " tab-item--active" : "";
+    const mutedClass = tab.mutedInfo?.muted ? " tab-title--muted" : "";
+
+    return `
+      <div class="tab-item${activeClass}" data-tab-id="${tab.id}">
+        <div class="tab-icon">${icon}</div>
+        <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
+        <button class="close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}">&times;</button>
+      </div>
+    `;
   }
 
   async function handleTabContextMenu(event) {
@@ -344,5 +376,173 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     const rect = element.getBoundingClientRect();
     positionContextMenu(rect.left + offsetX, rect.top + offsetY);
+  }
+
+  async function promptAndApplyZoom() {
+    const rawInput = prompt(
+      `请输入全局缩放百分比（${MIN_ZOOM_PERCENT}-${MAX_ZOOM_PERCENT}）`,
+      String(targetZoomPercent ?? 100)
+    );
+    if (rawInput === null) return;
+
+    const parsed = Number.parseFloat(rawInput.trim());
+    if (!Number.isFinite(parsed)) {
+      alert("请输入有效的数字");
+      return;
+    }
+
+    const clampedPercent = clampZoom(parsed);
+    targetZoomPercent = clampedPercent;
+
+    try {
+      await saveTargetZoomToStorage(clampedPercent);
+      const result = await applyZoomToAllTabs();
+      showZoomResult(parsed, clampedPercent, result);
+    } catch (error) {
+      console.error("设置缩放失败", error);
+      alert("设置缩放失败，请稍后重试");
+    }
+  }
+
+  function showZoomResult(requestedPercent, appliedPercent, stats) {
+    const lines = [
+      `缩放已应用至 ${appliedPercent}%`,
+      `成功：${stats.successCount} 个标签页`,
+      `失败：${stats.failureDetails.length} 个标签页`,
+    ];
+
+    if (stats.skippedDetails.length) {
+      lines.push(`跳过：${stats.skippedDetails.length} 个标签页（浏览器限制）`);
+    }
+
+    if (stats.failureDetails.length) {
+      const sample = stats.failureDetails
+        .slice(0, 3)
+        .map(({ title, reason }) => `· ${title}：${reason}`)
+        .join("\n");
+      lines.push("部分失败示例：\n" + sample);
+    }
+
+    if (requestedPercent !== appliedPercent) {
+      lines.push(
+        `提示：缩放值已被限制在 ${MIN_ZOOM_PERCENT}% ~ ${MAX_ZOOM_PERCENT}% 之间`
+      );
+    }
+
+    alert(lines.join("\n"));
+  }
+
+  async function loadTargetZoomFromStorage() {
+    if (!storageArea) return;
+    try {
+      const data = await storageArea.get(ZOOM_STORAGE_KEY);
+      const value = data?.[ZOOM_STORAGE_KEY];
+      if (Number.isFinite(value)) {
+        targetZoomPercent = clampZoom(value);
+      }
+    } catch (error) {
+      console.warn("读取缩放设置失败", error);
+    }
+  }
+
+  async function saveTargetZoomToStorage(value) {
+    if (!storageArea) return;
+    try {
+      await storageArea.set({ [ZOOM_STORAGE_KEY]: value });
+    } catch (error) {
+      console.warn("保存缩放设置失败", error);
+    }
+  }
+
+  async function applyZoomToAllTabs() {
+    if (!Number.isFinite(targetZoomPercent)) {
+      return { successCount: 0, failureDetails: [], skippedDetails: [] };
+    }
+
+    const zoomFactor = targetZoomPercent / 100;
+    const tabs = await chrome.tabs.query({});
+
+    const success = [];
+    const failures = [];
+    const skipped = [];
+
+    await Promise.all(
+      tabs.map(async (tab) => {
+        try {
+          const protocol = getUrlProtocol(tab.url);
+          if (!tab.url || restrictedProtocols.has(protocol)) {
+            skipped.push({
+              title: tab.title || tab.url || "未知页面",
+              reason: `不支持的协议：${protocol || "未知"}`,
+            });
+            return;
+          }
+
+          await chrome.tabs.setZoomSettings(tab.id, { scope: "per-tab" });
+          await chrome.tabs.setZoom(tab.id, zoomFactor);
+          success.push(tab.id);
+        } catch (error) {
+          failures.push({
+            title: tab.title || tab.url || "未知页面",
+            reason: error?.message || "原因未知",
+          });
+        }
+      })
+    );
+
+    return {
+      successCount: success.length,
+      failureDetails: failures,
+      skippedDetails: skipped,
+    };
+  }
+
+  async function handleTabCreated(tab) {
+    await applyZoomToTab(tab);
+  }
+
+  async function handleTabUpdated(tabId, changeInfo, tab) {
+    if (!Number.isFinite(targetZoomPercent)) return;
+    if (changeInfo.status === "complete" || changeInfo.url) {
+      await applyZoomToTab(
+        tab ?? (await chrome.tabs.get(tabId).catch(() => null))
+      );
+    }
+  }
+
+  async function handleWindowCreated(window) {
+    if (!Number.isFinite(targetZoomPercent)) return;
+
+    const tabs = await chrome.tabs.query({ windowId: window.id });
+    await Promise.all(tabs.map((tab) => applyZoomToTab(tab)));
+  }
+
+  async function applyZoomToTab(tab) {
+    if (!Number.isFinite(targetZoomPercent)) return;
+
+    let targetTab = tab;
+    if (!targetTab || typeof targetTab.id !== "number") {
+      return;
+    }
+
+    try {
+      const protocol = getUrlProtocol(targetTab.url);
+      if (!targetTab.url || restrictedProtocols.has(protocol)) {
+        return;
+      }
+
+      await chrome.tabs.setZoomSettings(targetTab.id, { scope: "per-tab" });
+      await chrome.tabs.setZoom(targetTab.id, targetZoomPercent / 100);
+    } catch (error) {
+      console.warn("应用缩放失败", targetTab, error);
+    }
+  }
+
+  function getUrlProtocol(url) {
+    try {
+      return url ? new URL(url).protocol : "";
+    } catch (error) {
+      return "";
+    }
   }
 });
