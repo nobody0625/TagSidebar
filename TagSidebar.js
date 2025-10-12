@@ -44,6 +44,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let isContextMenuVisible = false;
   let contextMenuAnchor = null;
   let targetZoomPercent = null;
+  const reloadingTabIds = new Set();
 
   addListener(window, "unload", dispose);
 
@@ -113,6 +114,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   addChromeListener(chrome.tabs.onCreated, handleTabCreated);
   addChromeListener(chrome.tabs.onUpdated, handleTabUpdated);
+  addChromeListener(chrome.tabs.onUpdated, handleTabStatusChange);
+  addChromeListener(chrome.tabs.onRemoved, handleTabRemoved);
   addChromeListener(chrome.windows.onCreated, handleWindowCreated);
 
   addListener(tabsContainer, "contextmenu", handleTabContextMenu);
@@ -151,6 +154,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
     cachedTabs = await chrome.tabs.query({ windowId });
 
+    const existingTabIds = new Set(cachedTabs.map((tab) => tab.id));
+    reloadingTabIds.forEach((id) => {
+      if (!existingTabIds.has(id)) {
+        reloadingTabIds.delete(id);
+      }
+    });
+
     if (isContextMenuVisible) hideContextMenu(true);
 
     let markup = "";
@@ -172,12 +182,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       : escapeHtml((title[0] || "★").toUpperCase());
     const activeClass = tab.active ? " tab-item--active" : "";
     const mutedClass = tab.mutedInfo?.muted ? " tab-title--muted" : "";
+    const isReloading = reloadingTabIds.has(tab.id);
+    const iconClass = `tab-icon${isReloading ? " tab-icon--loading" : ""}`;
+    const reloadAttrs = isReloading ? ' disabled aria-busy="true"' : "";
 
     return `
       <div class="tab-item${activeClass}" data-tab-id="${tab.id}">
-        <div class="tab-icon">${icon}</div>
+        <div class="${iconClass}">${icon}</div>
         <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
-        <button class="reload-tab-btn" type="button" aria-label="刷新标签页 ${escapedTitle}" title="刷新">↻</button>
+        <button class="reload-tab-btn"${reloadAttrs} type="button" aria-label="刷新标签页 ${escapedTitle}" title="刷新">↻</button>
         <button class="close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}">&times;</button>
       </div>
     `;
@@ -190,6 +203,30 @@ document.addEventListener("DOMContentLoaded", async () => {
         <span>新建标签页</span>
       </button>
     `;
+  }
+
+  function setTabLoadingState(tabId, isLoading) {
+    if (isLoading) {
+      reloadingTabIds.add(tabId);
+    } else {
+      reloadingTabIds.delete(tabId);
+    }
+
+    const tabElement = tabsContainer.querySelector(`[data-tab-id="${tabId}"]`);
+    if (!tabElement) return;
+
+    const iconElement = tabElement.querySelector(".tab-icon");
+    iconElement?.classList.toggle("tab-icon--loading", isLoading);
+
+    const reloadButton = tabElement.querySelector(".reload-tab-btn");
+    if (!reloadButton) return;
+
+    reloadButton.disabled = isLoading;
+    if (isLoading) {
+      reloadButton.setAttribute("aria-busy", "true");
+    } else {
+      reloadButton.removeAttribute("aria-busy");
+    }
   }
 
   async function handleTabContextMenu(event) {
@@ -220,6 +257,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     showContextMenu(menuItems, { x: event.clientX, y: event.clientY });
   }
 
+  function handleTabStatusChange(tabId, changeInfo) {
+    if (changeInfo.status === "loading") {
+      setTabLoadingState(tabId, true);
+    } else if (changeInfo.status === "complete") {
+      setTabLoadingState(tabId, false);
+    }
+  }
+
+  function handleTabRemoved(tabId) {
+    reloadingTabIds.delete(tabId);
+  }
+
   async function handleTabClick(event) {
     if (event.target.closest(".new-tab-btn")) {
       hideContextMenu();
@@ -236,7 +285,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       ".reload-tab-btn, .close-tab-btn"
     );
     if (actionButton?.classList.contains("reload-tab-btn")) {
-      await chrome.tabs.reload(context.id);
+      setTabLoadingState(context.id, true);
+      try {
+        await chrome.tabs.reload(context.id);
+      } catch (error) {
+        console.error("刷新标签页失败", error);
+        setTabLoadingState(context.id, false);
+      }
       return;
     }
 
