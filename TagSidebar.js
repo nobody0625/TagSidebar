@@ -104,8 +104,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, value));
   const describeTab = (tab) =>
     tab?.title?.trim() || tab?.pendingUrl || tab?.url || "未命名标签页";
-  const isZoomableTab = (tab) =>
-    Boolean(tab?.url) && !restrictedProtocols.has(getUrlProtocol(tab.url));
+  const findTab = (id) => cachedTabs.find((tab) => tab.id === id);
+  const getActiveCachedTab = () => cachedTabs.find((tab) => tab.active);
+  const isRestrictedUrl = (url) =>
+    !url || restrictedProtocols.has(getUrlProtocol(url));
 
   if (setZoomBtn) {
     addListener(setZoomBtn, "click", () => promptAndApplyZoom());
@@ -148,7 +150,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   addListener(tabsContainer, "dragover", handleTabDragOver);
   addListener(tabsContainer, "dragleave", handleTabDragLeave);
   addListener(tabsContainer, "drop", handleTabDrop);
-  addListener(tabsContainer, "dragend", handleTabDragEnd);
+  addListener(tabsContainer, "dragend", resetDragState);
 
   const passive = { passive: true };
   const scrollTargets = [
@@ -193,7 +195,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (isContextMenuVisible) hideContextMenu(true);
 
     if (currentActiveTabId === null) {
-      const activeTab = cachedTabs.find((tab) => tab.active);
+      const activeTab = getActiveCachedTab();
       if (activeTab) currentActiveTabId = activeTab.id;
     }
 
@@ -237,11 +239,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function setTabLoadingState(tabId, isLoading) {
-    if (isLoading) {
-      reloadingTabIds.add(tabId);
-    } else {
-      reloadingTabIds.delete(tabId);
-    }
+    isLoading ? reloadingTabIds.add(tabId) : reloadingTabIds.delete(tabId);
 
     const tabElement = tabsContainer.querySelector(`[data-tab-id="${tabId}"]`);
     if (!tabElement) return;
@@ -265,7 +263,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     hideContextMenu(true);
 
     const tab =
-      cachedTabs.find((item) => item.id === context.id) ||
+      findTab(context.id) ||
       (await chrome.tabs.get(context.id).catch(() => null));
     if (!tab) return;
 
@@ -312,19 +310,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     hideContextMenu();
 
     const actionButton = event.target.closest(".tab-action-btn");
+    const classList = actionButton?.classList;
 
     if (event.detail === 1) {
       lastActiveTabIdBeforeClick = null;
     }
 
-    if (actionButton?.classList.contains("copy-tab-btn")) {
+    if (classList?.contains("copy-tab-btn")) {
       event.preventDefault();
       event.stopPropagation();
       await copyTabUrl(context.id, actionButton);
       return;
     }
 
-    if (actionButton?.classList.contains("reload-tab-btn")) {
+    if (classList?.contains("reload-tab-btn")) {
       setTabLoadingState(context.id, true);
       try {
         await chrome.tabs.reload(context.id);
@@ -335,13 +334,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    if (actionButton?.classList.contains("close-tab-btn")) {
+    if (classList?.contains("close-tab-btn")) {
       await chrome.tabs.remove(context.id);
       return;
     }
 
     const fallbackActiveTabId =
-      currentActiveTabId ?? cachedTabs.find((tab) => tab.active)?.id ?? null;
+      currentActiveTabId ?? getActiveCachedTab()?.id ?? null;
     if (fallbackActiveTabId !== null && fallbackActiveTabId !== context.id) {
       lastActiveTabIdBeforeClick = fallbackActiveTabId;
     }
@@ -402,78 +401,63 @@ document.addEventListener("DOMContentLoaded", async () => {
     tabElement.classList.add("tab-item--dragging");
   }
 
+  const setDragOverElement = (element) => {
+    if (dragOverElement === element) return;
+    dragOverElement?.classList.remove("tab-item--drag-over");
+    dragOverElement = element;
+    dragOverElement?.classList.add("tab-item--drag-over");
+  };
+
   function handleTabDragOver(event) {
     if (!Number.isFinite(draggedTabId)) return;
 
     const tabElement = event.target.closest(".tab-item");
-    if (!tabElement || Number(tabElement.dataset.tabId) === draggedTabId) {
-      if (!tabElement) {
-        dragOverElement?.classList.remove("tab-item--drag-over");
-        dragOverElement = null;
-        event.preventDefault();
-      }
+    if (!tabElement) {
+      event.preventDefault();
+      setDragOverElement(null);
       return;
     }
 
+    const targetId = Number(tabElement.dataset.tabId);
+    if (!Number.isFinite(targetId) || targetId === draggedTabId) return;
+
     event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = "move";
-    }
-
-    if (dragOverElement && dragOverElement !== tabElement) {
-      dragOverElement.classList.remove("tab-item--drag-over");
-    }
-
-    dragOverElement = tabElement;
-    dragOverElement.classList.add("tab-item--drag-over");
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    setDragOverElement(tabElement);
   }
 
   function handleTabDragLeave(event) {
     const related = event.relatedTarget;
-    if (!related || !tabsContainer.contains(related)) {
-      dragOverElement?.classList.remove("tab-item--drag-over");
-      dragOverElement = null;
-    }
+    if (!related || !tabsContainer.contains(related)) setDragOverElement(null);
   }
 
   async function handleTabDrop(event) {
     if (!Number.isFinite(draggedTabId)) return;
     event.preventDefault();
 
-    const sourceTab = cachedTabs.find((tab) => tab.id === draggedTabId);
-    if (!sourceTab) {
-      resetDragState();
-      return;
-    }
+    const sourceTab = findTab(draggedTabId);
+    if (!sourceTab) return resetDragState();
 
     const targetElement = event.target.closest(".tab-item");
     let targetIndex = cachedTabs.length;
 
     if (targetElement) {
       const targetId = Number(targetElement.dataset.tabId);
-      if (targetId === draggedTabId) {
-        resetDragState();
-        return;
-      }
+      if (targetId === draggedTabId) return resetDragState();
 
       if (Number.isFinite(targetId)) {
-        const targetTab = cachedTabs.find((tab) => tab.id === targetId);
+        const targetTab = findTab(targetId);
         if (targetTab) {
           const rect = targetElement.getBoundingClientRect();
-          const insertBefore = event.clientY < rect.top + rect.height / 2;
-          targetIndex = insertBefore ? targetTab.index : targetTab.index + 1;
+          const before = event.clientY < rect.top + rect.height / 2;
+          targetIndex = before ? targetTab.index : targetTab.index + 1;
         }
       }
     }
 
-    if (!Number.isFinite(targetIndex)) {
-      resetDragState();
-      return;
-    }
+    if (!Number.isFinite(targetIndex)) return resetDragState();
 
-    if (targetIndex > sourceTab.index) {
-      targetIndex -= 1;
-    }
+    if (targetIndex > sourceTab.index) targetIndex -= 1;
 
     if (targetIndex !== sourceTab.index) {
       try {
@@ -487,16 +471,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     resetDragState();
   }
 
-  function handleTabDragEnd() {
-    resetDragState();
-  }
-
   function resetDragState() {
     tabsContainer
       .querySelectorAll(".tab-item--dragging")
       .forEach((element) => element.classList.remove("tab-item--dragging"));
-    dragOverElement?.classList.remove("tab-item--drag-over");
-    dragOverElement = null;
+    setDragOverElement(null);
     draggedTabId = null;
   }
 
@@ -516,8 +495,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   async function copyTabUrl(tabId, triggerButton) {
     const tab =
-      cachedTabs.find((item) => item.id === tabId) ||
-      (await chrome.tabs.get(tabId).catch(() => null));
+      findTab(tabId) || (await chrome.tabs.get(tabId).catch(() => null));
     const urlToCopy = tab?.url || tab?.pendingUrl;
     if (!urlToCopy) return;
 
@@ -634,14 +612,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function showContextMenu(items, position) {
-    contextMenu.innerHTML = "";
-    const fragment = document.createDocumentFragment();
-
-    items.forEach((item) => {
-      fragment.appendChild(createMenuElement(item));
-    });
-
-    contextMenu.appendChild(fragment);
+    contextMenu.replaceChildren(...items.map(createMenuElement));
     contextMenu.style.display = "block";
     contextMenu.setAttribute("aria-hidden", "false");
 
@@ -811,7 +782,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     await Promise.all(
       tabs.map(async (tab) => {
-        if (!tab?.url || restrictedProtocols.has(getUrlProtocol(tab.url))) {
+        if (isRestrictedUrl(tab?.url)) {
           stats.skippedDetails.push({
             title: tab?.title || tab?.url || "未知页面",
             reason: `不支持的协议：${getUrlProtocol(tab?.url) || "未知"}`,
@@ -839,7 +810,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (
       !Number.isFinite(targetZoomPercent) ||
       !tab?.id ||
-      restrictedProtocols.has(getUrlProtocol(tab.url))
+      isRestrictedUrl(tab.url)
     ) {
       return;
     }
