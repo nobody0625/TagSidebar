@@ -214,8 +214,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   <div class="tab-item${activeClass}" data-tab-id="${tab.id}" draggable="true">
         <div class="${iconClass}">${icon}</div>
         <span class="tab-title${mutedClass}" title="${escapedTitle}">${escapedTitle}</span>
-        <button class="reload-tab-btn"${reloadAttrs} type="button" aria-label="刷新标签页 ${escapedTitle}" title="刷新">↻</button>
-        <button class="close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}">&times;</button>
+        <button class="tab-action-btn copy-tab-btn" type="button" aria-label="复制标签页 ${escapedTitle} 的地址" title="复制地址">⧉</button>
+        <button class="tab-action-btn reload-tab-btn"${reloadAttrs} type="button" aria-label="刷新标签页 ${escapedTitle}" title="刷新">↻</button>
+        <button class="tab-action-btn close-tab-btn" type="button" aria-label="关闭标签页 ${escapedTitle}" title="关闭标签">&times;</button>
       </div>
     `;
   }
@@ -304,12 +305,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     hideContextMenu();
 
-    const actionButton = event.target.closest(
-      ".reload-tab-btn, .close-tab-btn"
-    );
+    const actionButton = event.target.closest(".tab-action-btn");
 
     if (event.detail === 1) {
       lastActiveTabIdBeforeClick = null;
+    }
+
+    if (actionButton?.classList.contains("copy-tab-btn")) {
+      event.preventDefault();
+      event.stopPropagation();
+      await copyTabUrl(context.id, actionButton);
+      return;
     }
 
     if (actionButton?.classList.contains("reload-tab-btn")) {
@@ -343,9 +349,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const context = getTabContext(event);
     if (!context) return;
 
-    const actionButton = event.target.closest(
-      ".reload-tab-btn, .close-tab-btn"
-    );
+    const actionButton = event.target.closest(".tab-action-btn");
     if (actionButton) return;
 
     event.preventDefault();
@@ -488,6 +492,49 @@ document.addEventListener("DOMContentLoaded", async () => {
     dragOverElement?.classList.remove("tab-item--drag-over");
     dragOverElement = null;
     draggedTabId = null;
+  }
+
+  async function copyTabUrl(tabId, triggerButton) {
+    const tab =
+      cachedTabs.find((item) => item.id === tabId) ||
+      (await chrome.tabs.get(tabId).catch(() => null));
+    const urlToCopy = tab?.url || tab?.pendingUrl;
+    if (!urlToCopy) return;
+
+    const applyCopiedState = () => {
+      if (!triggerButton) return;
+      triggerButton.classList.add("copy-tab-btn--copied");
+      setTimeout(() => {
+        triggerButton.classList.remove("copy-tab-btn--copied");
+      }, 1200);
+    };
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(urlToCopy);
+        applyCopiedState();
+        return;
+      }
+    } catch (error) {
+      console.warn("navigator.clipboard.writeText 失败，尝试回退方案", error);
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = urlToCopy;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      document.execCommand("copy");
+      applyCopiedState();
+    } catch (error) {
+      console.error("复制标签页地址失败", error);
+    } finally {
+      document.body.removeChild(textarea);
+    }
   }
 
   function handleTabActivated(activeInfo) {

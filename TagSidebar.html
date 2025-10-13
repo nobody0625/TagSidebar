@@ -157,7 +157,7 @@
       .tab-title--muted {
         color: #6b7280;
       }
-      .close-tab-btn {
+      .tab-action-btn {
         background: none;
         border: none;
         cursor: pointer;
@@ -166,24 +166,25 @@
         padding: 2px 4px;
         color: #6b7280;
         border-radius: 4px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: background-color 0.2s ease, color 0.2s ease;
+      }
+      .reload-tab-btn:hover {
+        background-color: rgba(55, 148, 255, 0.12);
+        color: #3794ff;
       }
       .close-tab-btn:hover {
         background-color: rgba(239, 68, 68, 0.08);
         color: #ef4444;
       }
-      .reload-tab-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 16px;
-        line-height: 1;
-        padding: 2px 4px;
-        color: #6b7280;
-        border-radius: 4px;
+      .copy-tab-btn:hover {
+        background-color: rgba(37, 99, 235, 0.12);
+        color: #2563eb;
       }
-      .reload-tab-btn:hover {
-        background-color: rgba(55, 148, 255, 0.12);
-        color: #3794ff;
+      .copy-tab-btn--copied {
+        color: #1d4ed8;
       }
       .reload-tab-btn[disabled] {
         cursor: wait;
