@@ -1,9 +1,10 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  const [toggleFullscreenBtn, setZoomBtn, tabsContainer, contextMenu] = [
+  const [toggleFullscreenBtn, setZoomBtn, tabsContainer, contextMenu, toast] = [
     document.getElementById("toggle-fullscreen-btn"),
     document.getElementById("set-zoom-btn"),
     document.getElementById("tabs-container"),
     document.getElementById("custom-context-menu"),
+    document.getElementById("toast-notice"),
   ];
 
   if (!tabsContainer || !contextMenu) {
@@ -33,6 +34,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     cleanupTasks.push(() => eventTarget.removeListener(handler));
   };
   const dispose = () => {
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
     while (cleanupTasks.length) {
       try {
         cleanupTasks.pop()?.();
@@ -52,6 +57,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let lastActiveTabIdBeforeClick = null;
   let draggedTabId = null;
   let dragOverElement = null;
+  let toastTimer = null;
 
   addListener(window, "unload", dispose);
 
@@ -494,6 +500,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     draggedTabId = null;
   }
 
+  function showToast(message) {
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add("toast--visible");
+    toast.setAttribute("aria-hidden", "false");
+
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast.classList.remove("toast--visible");
+      toast.setAttribute("aria-hidden", "true");
+      toastTimer = null;
+    }, 1600);
+  }
+
   async function copyTabUrl(tabId, triggerButton) {
     const tab =
       cachedTabs.find((item) => item.id === tabId) ||
@@ -513,6 +533,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(urlToCopy);
         applyCopiedState();
+        showToast("链接已复制");
         return;
       }
     } catch (error) {
@@ -530,6 +551,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       document.execCommand("copy");
       applyCopiedState();
+      showToast("链接已复制");
     } catch (error) {
       console.error("复制标签页地址失败", error);
     } finally {

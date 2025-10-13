@@ -237,6 +237,25 @@
         background-color: #e5e7eb;
         margin: 4px 0;
       }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%) translateY(16px);
+        padding: 8px 16px;
+        border-radius: 999px;
+        background-color: rgba(17, 24, 39, 0.88);
+        color: #ffffff;
+        font-size: 13px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.2);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+      .toast--visible {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
     </style>
   </head>
   <body>
@@ -251,6 +270,7 @@
       role="menu"
       aria-hidden="true"
     ></div>
+    <div id="toast-notice" class="toast" role="status" aria-hidden="true"></div>
     <script src="TagSidebar.js"></script>
   </body>
 </html>
