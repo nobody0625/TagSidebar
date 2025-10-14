@@ -1,6 +1,6 @@
-# TagSidebar Chrome 扩展说明
+# TabSidebar Chrome 扩展说明
 
-本文档旨在帮助你快速了解 TagSidebar 项目的整体设计与实现，并提供从零开发 Chrome 扩展的完整流程指引。内容主要分为两部分：Chrome 扩展制作流程与 TagSidebar 的功能说明。
+本文档旨在帮助你快速了解 TabSidebar 项目的整体设计与实现，并提供从零开发 Chrome 扩展的完整流程指引。内容主要分为两部分：Chrome 扩展制作流程与 TabSidebar 的功能说明。
 
 ## 一、Chrome 扩展（Manifest V3）制作流程
 
@@ -27,7 +27,7 @@ Manifest 是扩展的入口说明文件，重点字段如下：
 - `action`: 定义工具栏按钮的行为与图标。
 - `background`: 指定后台 Service Worker。
 - `permissions` 与 `host_permissions`: 描述所需的 API 权限（如 `tabs`、`storage`、`sidePanel` 等）。
-- `side_panel`: 指定侧边栏入口页面（如 `TagSidebar.html`）。
+- `side_panel`: 指定侧边栏入口页面（如 `TabSidebar.html`）。
 
 完成 manifest 后，可使用 `chrome://extensions` 的「加载已解压的扩展程序」进行开发调试。
 
@@ -56,13 +56,13 @@ Manifest 是扩展的入口说明文件，重点字段如下：
 2. 使用 `chrome://extensions/` 的「打包扩展程序」生成 `.crx` 与 `.pem`，或直接上传压缩包到开发者后台。
 3. 填写商店信息、截图与隐私合规说明，提交审核。
 
-## 二、TagSidebar 插件功能详解
+## 二、TabSidebar 插件功能详解
 
-TagSidebar 是一个基于 Chrome Side Panel 的标签页管理扩展，目标是提供更高效的标签页浏览、批量操作与全局缩放控制。以下内容结合 `TagSidebar.js` 与 `background.js` 中的核心实现，按模块说明其主要能力。
+TabSidebar 是一个基于 Chrome Side Panel 的标签页管理扩展，目标是提供更高效的标签页浏览、批量操作与全局缩放控制。以下内容结合 `TabSidebar.js` 与 `background.js` 中的核心实现，按模块说明其主要能力。
 
 ### 1. 基础布局
 
-- **工具栏（顶部）**：对应 `TagSidebar.js` 中的 DOM 解构（`toggle-fullscreen-btn`、`set-zoom-btn`）。
+- **工具栏（顶部）**：对应 `TabSidebar.js` 中的 DOM 解构（`toggle-fullscreen-btn`、`set-zoom-btn`）。
 
   ```javascript
   const [toggleFullscreenBtn, setZoomBtn, tabsContainer, contextMenu, toast] = [
