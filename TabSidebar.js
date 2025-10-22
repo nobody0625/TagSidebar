@@ -1,4 +1,6 @@
+// 侧边栏脚本入口：等到 DOM 完全构建后再执行，以确保节点可访问。
 document.addEventListener("DOMContentLoaded", async () => {
+  // 预先缓存常用的 DOM 元素，避免重复查询。
   const [toggleFullscreenBtn, setZoomBtn, tabsContainer, contextMenu, toast] = [
     document.getElementById("toggle-fullscreen-btn"),
     document.getElementById("set-zoom-btn"),
@@ -8,10 +10,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   ];
 
   if (!tabsContainer || !contextMenu) {
+    // 如果关键元素不存在，直接退出，避免后续逻辑报错。
     console.warn("初始化侧边栏失败：缺少关键元素");
     return;
   }
 
+  // escapeHtml：将动态文本转义为安全的 HTML，防止 XSS 或 DOM 结构破坏。
   const escapeHtml = (() => {
     const LOOKUP = {
       "&": "&amp;",
@@ -24,15 +28,20 @@ document.addEventListener("DOMContentLoaded", async () => {
       String(value).replace(/[&<>"']/g, (char) => LOOKUP[char] ?? char);
   })();
 
+  // cleanupTasks：集中记录所有需要移除的监听器和资源，防止 Side Panel 关闭后泄漏。
   const cleanupTasks = [];
+
+  // DOM 监听封装：注册时顺便把对应的移除操作加入 cleanupTasks。
   const addListener = (target, type, handler, options) => {
     target.addEventListener(type, handler, options);
     cleanupTasks.push(() => target.removeEventListener(type, handler, options));
   };
+  // Chrome API 监听封装：与 addListener 一致，确保 Service Worker 卸载时释放。
   const addChromeListener = (eventTarget, handler) => {
     eventTarget.addListener(handler);
     cleanupTasks.push(() => eventTarget.removeListener(handler));
   };
+  // dispose：在窗口关闭或脚本卸载时调用，清除所有 side panel 状态。
   const dispose = () => {
     if (toastTimer) {
       clearTimeout(toastTimer);
@@ -48,6 +57,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     hideContextMenu(true);
   };
 
+  // 运行期状态：缓存标签列表、上下文菜单/缩放/拖拽等信息。
   let cachedTabs = [];
   let isContextMenuVisible = false;
   let contextMenuAnchor = null;
@@ -61,6 +71,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   addListener(window, "unload", dispose);
 
+  // ------ 全局事件监听：用于隐藏菜单、响应键盘、维护聚焦状态 ------
   addListener(document, "click", (event) => {
     if (isContextMenuVisible && !contextMenu.contains(event.target)) {
       hideContextMenu();
@@ -80,6 +91,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   addListener(contextMenu, "contextmenu", (event) => event.preventDefault());
 
+  // 切换全屏按钮：在最大化与全屏之间来回切换，方便沉浸式浏览。
   if (toggleFullscreenBtn) {
     addListener(toggleFullscreenBtn, "click", async () => {
       const currentWindow = await chrome.windows.getCurrent();
@@ -89,6 +101,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // 缩放设置相关常量与工具：用于限制数值范围并过滤不支持的协议。
   const storageArea = chrome.storage?.sync ?? chrome.storage?.local;
   const ZOOM_STORAGE_KEY = "globalZoomPercent";
   const MIN_ZOOM_PERCENT = 10;
@@ -113,6 +126,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     addListener(setZoomBtn, "click", () => promptAndApplyZoom());
   }
 
+  // 监听所有可能影响标签列表的事件，确保侧边栏状态实时同步。
   [
     chrome.tabs.onCreated,
     chrome.tabs.onRemoved,
@@ -124,6 +138,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.tabs.onActivated,
   ].forEach((eventTarget) => addChromeListener(eventTarget, loadTabs));
 
+  // 新建与更新的标签需要同步全局缩放，因此额外注册监听器。
   addChromeListener(chrome.tabs.onCreated, applyZoomToTab);
   addChromeListener(chrome.tabs.onUpdated, async (tabId, changeInfo, tab) => {
     if (
@@ -134,6 +149,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       await applyZoomToTab(target);
     }
   });
+  // 更新、移除事件同时驱动加载状态和缓存同步。
   addChromeListener(chrome.tabs.onUpdated, handleTabStatusChange);
   addChromeListener(chrome.tabs.onRemoved, handleTabRemoved);
   addChromeListener(chrome.windows.onCreated, async (window) => {
@@ -143,6 +159,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   addChromeListener(chrome.tabs.onActivated, handleTabActivated);
 
+  // 列表容器事件：转发右键菜单、点击、拖拽等交互。
   addListener(tabsContainer, "contextmenu", handleTabContextMenu);
   addListener(tabsContainer, "click", handleTabClick);
   addListener(tabsContainer, "dblclick", handleTabDoubleClick);
@@ -153,6 +170,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   addListener(tabsContainer, "dragend", resetDragState);
 
   const passive = { passive: true };
+  // 为了让自定义菜单在滚动/缩放时保持跟随，需要监听多个容器。
   const scrollTargets = [
     ...new Set([
       tabsContainer,
@@ -168,10 +186,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   addListener(window, "resize", repositionContextMenuToAnchor);
 
+  // 初始化顺序：读取缩放配置 -> 应用到所有标签 -> 渲染侧边栏。
   await loadTargetZoomFromStorage();
   await applyZoomToAllTabs();
   await loadTabs();
 
+  // 根据事件源追溯到最近的 tab-item，返回其 DOM 与 tabId。
   function getTabContext(event) {
     const element = event.target.closest(".tab-item");
     if (!element) return null;
@@ -179,6 +199,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return Number.isFinite(id) ? { element, id } : null;
   }
 
+  // 查询当前窗口的全部标签，并刷新侧边栏列表
   async function loadTabs() {
     const { id: windowId } = await chrome.windows.getCurrent({
       populate: false,
@@ -206,6 +227,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     tabsContainer.innerHTML = `${markup}${renderNewTabRow()}`;
   }
 
+  // 生成单个标签节点的 HTML 片段，包含状态、图标与操作按钮。
   function renderTab(tab) {
     const title = describeTab(tab);
     const escapedTitle = escapeHtml(title);
@@ -229,6 +251,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  // 渲染底部「新建标签页」按钮。
   function renderNewTabRow() {
     return `
       <button class="new-tab-btn" type="button">
@@ -238,6 +261,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  // 根据加载状态更新图标动画与刷新按钮禁用样式。
   function setTabLoadingState(tabId, isLoading) {
     isLoading ? reloadingTabIds.add(tabId) : reloadingTabIds.delete(tabId);
 
@@ -255,6 +279,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 自定义右键菜单入口：定位目标标签并根据其状态构造菜单。
   async function handleTabContextMenu(event) {
     const context = getTabContext(event);
     if (!context) return;
@@ -283,6 +308,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     showContextMenu(menuItems, { x: event.clientX, y: event.clientY });
   }
 
+  // 刷新按钮的 loading 状态由 tabs.onUpdated 的 changeInfo 驱动。
   function handleTabStatusChange(tabId, changeInfo) {
     if (changeInfo.status === "loading") {
       setTabLoadingState(tabId, true);
@@ -291,12 +317,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 标签关闭时清理状态缓存，避免引用失效。
   function handleTabRemoved(tabId) {
     reloadingTabIds.delete(tabId);
     if (currentActiveTabId === tabId) currentActiveTabId = null;
     if (lastActiveTabIdBeforeClick === tabId) lastActiveTabIdBeforeClick = null;
   }
 
+  // 主点击逻辑：区分按钮操作与激活标签行为。
   async function handleTabClick(event) {
     if (event.target.closest(".new-tab-btn")) {
       hideContextMenu();
@@ -350,6 +378,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     await chrome.windows.update(tab.windowId, { focused: true });
   }
 
+  // 双击关闭标签，并尽量恢复上一个活动标签以保持工作流。
   async function handleTabDoubleClick(event) {
     const context = getTabContext(event);
     if (!context) return;
@@ -386,6 +415,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 开始拖拽时记录当前标签 ID，并设置拖拽效果。
   function handleTabDragStart(event) {
     const tabElement = event.target.closest(".tab-item");
     if (!tabElement) return;
@@ -401,6 +431,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     tabElement.classList.add("tab-item--dragging");
   }
 
+  // 根据鼠标悬停的 tab 调整虚线高亮，辅助用户判断插入位置。
   const setDragOverElement = (element) => {
     if (dragOverElement === element) return;
     dragOverElement?.classList.remove("tab-item--drag-over");
@@ -408,6 +439,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     dragOverElement?.classList.add("tab-item--drag-over");
   };
 
+  // 拖拽经过时阻止默认行为，允许 drop 且更新视觉反馈。
   function handleTabDragOver(event) {
     if (!Number.isFinite(draggedTabId)) return;
 
@@ -426,11 +458,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     setDragOverElement(tabElement);
   }
 
+  // 当拖拽元素离开列表或悬停到无效区域时清除高亮。
   function handleTabDragLeave(event) {
     const related = event.relatedTarget;
     if (!related || !tabsContainer.contains(related)) setDragOverElement(null);
   }
 
+  // 计算拖拽释放的目标索引，并调用 chrome.tabs.move 调整顺序。
   async function handleTabDrop(event) {
     if (!Number.isFinite(draggedTabId)) return;
     event.preventDefault();
@@ -471,6 +505,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     resetDragState();
   }
 
+  // 统一清理拖拽相关的类名与状态变量。
   function resetDragState() {
     tabsContainer
       .querySelectorAll(".tab-item--dragging")
@@ -479,6 +514,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     draggedTabId = null;
   }
 
+  // 展示临时提示信息（复制成功等），带自动隐藏计时器。
   function showToast(message) {
     if (!toast) return;
     toast.textContent = message;
@@ -493,6 +529,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }, 1600);
   }
 
+  // 支持按钮复制标签地址，包含 Clipboard API 与 textarea 回退方案。
   async function copyTabUrl(tabId, triggerButton) {
     const tab =
       findTab(tabId) || (await chrome.tabs.get(tabId).catch(() => null));
@@ -537,12 +574,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 记录当前激活的标签，便于单击/双击逻辑引用。
   function handleTabActivated(activeInfo) {
     if (currentActiveTabId !== activeInfo.tabId) {
       currentActiveTabId = activeInfo.tabId;
     }
   }
 
+  // 在当前窗口末尾创建新标签，保持 Side Panel 与浏览器同步。
   async function createTabInCurrentWindow() {
     const { id: windowId } = await chrome.windows.getCurrent({
       populate: false,
@@ -557,6 +596,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     disabled,
   });
 
+  // 根据当前标签与同窗口其他标签生成菜单项数组。
   function buildContextMenuItems(tab, tabsInWindow) {
     const otherTabs = tabsInWindow.filter((item) => item.id !== tab.id);
     const available = (predicate) =>
@@ -611,6 +651,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     ];
   }
 
+  // 渲染并展示自定义菜单，同时设置初始焦点。
   function showContextMenu(items, position) {
     contextMenu.replaceChildren(...items.map(createMenuElement));
     contextMenu.style.display = "block";
@@ -628,6 +669,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     isContextMenuVisible = true;
   }
 
+  // 将菜单数据映射为按钮或分隔符节点，并注入点击行为。
   function createMenuElement(item) {
     if (item.type === "separator") {
       const separatorNode = document.createElement("div");
@@ -658,6 +700,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return button;
   }
 
+  // 隐藏菜单并清空内容，可强制触发（例如标签被删除时）。
   function hideContextMenu(force = false) {
     if (!isContextMenuVisible && !force) return;
 
@@ -668,6 +711,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     contextMenuAnchor = null;
   }
 
+  // 控制菜单位置，自动防止超出窗口视口。
   function positionContextMenu(x, y, options = {}) {
     contextMenu.style.left = `${x}px`;
     contextMenu.style.top = `${y}px`;
@@ -684,6 +728,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // 当滚动或窗口尺寸变化时，根据锚点重新定位菜单。
   function repositionContextMenuToAnchor() {
     if (!isContextMenuVisible || !contextMenuAnchor) return;
     const { element, offsetX, offsetY } = contextMenuAnchor;
@@ -695,6 +740,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     positionContextMenu(rect.left + offsetX, rect.top + offsetY);
   }
 
+  // 弹出对话框获取缩放值，并在校验后保存与应用。
   async function promptAndApplyZoom() {
     const rawInput = prompt(
       `请输入全局缩放百分比（${MIN_ZOOM_PERCENT}-${MAX_ZOOM_PERCENT}）`,
@@ -721,6 +767,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 将缩放结果整理为可读信息，通过 alert 告知用户。
   function showZoomResult(requestedPercent, appliedPercent, stats) {
     const lines = [
       `缩放已应用至 ${appliedPercent}%`,
@@ -749,6 +796,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     alert(lines.join("\n"));
   }
 
+  // 从 storage 中读取全局缩放百分比，恢复用户偏好。
   async function loadTargetZoomFromStorage() {
     if (!storageArea) return;
     try {
@@ -762,6 +810,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 将新的缩放百分比持久化到同步存储。
   async function saveTargetZoomToStorage(value) {
     if (!storageArea) return;
     try {
@@ -771,6 +820,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 遍历所有标签应用统一缩放，并记录成功/失败详细信息。
   async function applyZoomToAllTabs() {
     if (!Number.isFinite(targetZoomPercent)) {
       return { successCount: 0, failureDetails: [], skippedDetails: [] };
@@ -806,6 +856,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return stats;
   }
 
+  // 对单个标签设置缩放，主要用于新开/刷新场景。
   async function applyZoomToTab(tab) {
     if (
       !Number.isFinite(targetZoomPercent) ||
@@ -823,6 +874,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // 安全解析 URL 协议，出现异常时返回空字符串。
   function getUrlProtocol(url) {
     try {
       return url ? new URL(url).protocol : "";
